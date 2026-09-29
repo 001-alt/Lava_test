@@ -1,1 +1,46 @@
+# Lava_test 固态硬盘全段测试看板
 
+Lava_test 是面向 SSD 产线的测试数据看板，将工站、机柜、服务器、盘位与测试日志关联起来，用于查看在制状态、产能瓶颈、不良与报错。
+
+## 项目亮点
+
+- 覆盖 `ICT → FUNCTION → BIST → ESS → FINAL → CUS` 全流程，ORT 作为旁路抽检
+- 支持 13,585 个盘位的拓扑展示、设备台账导入和产能分析
+- 提供平面图、当日报表、产量统计、不良记录、报错记录、实时拉取、工单管理和日志分析
+- 支持 Excel 设备台账导入、IP 映射校验，以及 CSV / JSON 数据导出
+- 通过解析器注册表和幂等入库流水线接入测试日志，自动更新盘位状态和不良记录
+- 配套 Python 桥接服务，支持 SSH、FTP、MES 和本地文件通道
+- 源码采用模块化结构，构建为可离线打开的单文件 HTML
+
+## 界面预览
+
+### 当日报表
+
+![Lava_test 当日报表](docs/images/daily-report.png)
+
+### 产线平面图
+
+![Lava_test 产线平面图](docs/images/floor-map.png)
+
+### 导出中心
+
+![Lava_test 导出中心](docs/images/export-center.png)
+
+## 技术栈
+
+`JavaScript` `HTML/CSS` `Node.js` `Python` `IndexedDB` `SSH` `FTP` `Data Visualization`
+
+## 快速开始
+
+直接双击 `Lava_test看板.html`，点击“生成模拟数据”即可查看完整界面。
+
+```bash
+node build.js
+npm run verify:all
+```
+
+需要接入现场数据时，运行 `bridge\启动桥接服务.bat`，再访问 `http://127.0.0.1:8770/`。
+
+## 项目状态
+
+核心看板、设备台账、数据接入和桥接服务已完成，项目同时包含领域测试、冒烟测试、桥接接口测试和端到端演练。
