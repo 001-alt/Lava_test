@@ -1,0 +1,59 @@
+{
+  "_说明": [
+    "桥接服务的初始配置。用法：python lava_bridge.py --config config.json",
+    "也可以不改这里 —— 页面的「接入设置」会把配置下发给桥接，效果相同。",
+    "本文件适合把现场连接信息固化下来，免得每次开页面都要重填。"
+  ],
+
+  "_安全提示": [
+    "本文件含密码，不要提交到版本库、不要外发。",
+    "页面侧的「导出完整 JSON」不包含这里的密码 —— 密码只存在桥接侧。"
+  ],
+
+  "ftp": {
+    "host": "10.32.119.20",
+    "port": 21,
+    "user": "Administrator",
+    "password": "在这里填真实密码",
+    "basePath": "/lava/logs",
+    "passive": true,
+    "encoding": "utf-8",
+    "timeout": 20
+  },
+
+  "local": {
+    "roots": [
+      "D:/lava/logs",
+      "//192.168.1.10/share/lava"
+    ]
+  },
+
+  "ssh": {
+    "user": "root",
+    "port": 22,
+    "password": "在这里填真实密码，或改用 keyPath",
+    "keyPath": "",
+    "auth": "auto",
+    "intervalSec": 60,
+    "workers": 20,
+    "timeout": 8,
+    "logRoot": "/home/dml_slt_test/dml_slt_test_logs",
+    "_testProcessPattern": "判断机台是否在测：用 ps 输出里能匹配到的进程名特征",
+    "testProcessPattern": "slt|test|ssd|dml|burn"
+  },
+
+  "mes": {
+    "baseUrl": "",
+    "token": "",
+    "authHeader": "Authorization",
+    "authPrefix": "Bearer ",
+    "verifySsl": true,
+    "_endpoints": "端点名 -> 路径。现场协议确定后填这里，页面不用改。",
+    "endpoints": {
+      "workorders": "/api/workorder-options",
+      "records": "/api/test-records"
+    }
+  },
+
+  "webRoot": ""
+}

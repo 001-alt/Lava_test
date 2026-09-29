@@ -1,0 +1,206 @@
+/* ============================================================================
+   平面图样式
+   ----------------------------------------------------------------------------
+   两种呈现粒度：
+     summary  汇总卡（默认）—— 只显示设备/机柜的占用数字与进度条，不画盘位格
+     detail   盘位网格（按需展开）—— 真正逐格渲染，用于排查具体位置
+
+   为什么默认不画盘位格：
+     满配 12,737 个格子在没有真实数据时几乎全是空位，既看不出信息又拖慢渲染。
+     默认用汇总卡，等数据导入后再展开细节，是更合理的默认。
+   ============================================================================ */
+
+/* ==========================================================================
+   工站分区
+   ========================================================================== */
+.sec {
+  margin-bottom:16px; border:1px solid var(--line); border-radius:var(--r);
+  background:var(--panel); overflow:hidden;
+}
+.sec-head {
+  display:flex; align-items:center; gap:11px; flex-wrap:wrap;
+  padding:9px 14px;
+  background:linear-gradient(180deg,var(--head-a),var(--head-b));
+  border-bottom:1px solid var(--line); cursor:pointer; user-select:none;
+}
+.sec-head:hover { background:var(--panel-2); }
+.sec-head .bar-l { width:3px; height:19px; border-radius:2px; flex:none; }
+.sec-head .t { font-size:13.5px; font-weight:600; display:flex; align-items:center; gap:7px; }
+.sec-head .sub { font-size:11px; color:var(--tx-3); }
+.sec-head .kpis { display:flex; gap:13px; font-size:11px; color:var(--tx-2);
+  flex-wrap:wrap; margin-left:auto; }
+.sec-head .kpis b { color:var(--tx); font-size:12.5px; font-weight:600; }
+.sec-head .fold-tag { font-size:11px; color:var(--tx-3);
+  border:1px solid var(--line-2); border-radius:var(--r-sm); padding:1px 7px; flex:none; }
+.sec-body { padding:11px 12px 13px; }
+.sec-body.hide { display:none; }
+
+/* 分区工具条（展开盘位 / 全展开） */
+.sec-tools { display:flex; gap:7px; align-items:center; flex-wrap:wrap; margin-bottom:10px; }
+.sec-tools .hint { margin:0; }
+
+/* ==========================================================================
+   设备卡 —— 每台设备一张，内含盘位网格
+   ========================================================================== */
+.eq-wrap { display:flex; flex-wrap:wrap; gap:10px; }
+
+.eq {
+  border:1px solid var(--line); border-radius:6px; background:var(--panel-2);
+  padding:9px 11px; min-width:0;
+  /* 卡片较多时让浏览器跳过视口外的布局与绘制 */
+  content-visibility:auto; contain-intrinsic-size:auto 320px;
+}
+.eq.fault { border-color:var(--bad); }
+.eq.maint { border-color:var(--warn); }
+
+.eq-head { display:flex; align-items:center; gap:8px; margin-bottom:7px; flex-wrap:wrap; }
+.eq-head .id { font-size:12.5px; font-weight:600; font-variant-numeric:tabular-nums; }
+.eq-head .occ { font-size:11px; color:var(--tx-2); font-variant-numeric:tabular-nums; }
+.eq-head .occ b { color:var(--tx); }
+.eq-foot { display:flex; align-items:center; gap:8px; margin-top:7px;
+  font-size:10.5px; color:var(--tx-3); }
+.eq-foot .pbar { flex:1; min-width:44px; }
+
+.badge { font-size:10px; padding:1px 7px; border-radius:9px; border:1px solid; white-space:nowrap; }
+.b-run   { color:var(--run); border-color:var(--line-2); background:var(--info-bg); }
+.b-idle  { color:var(--tx-3); border-color:var(--line-2); background:var(--panel-2); }
+.b-fault { color:var(--bad); border-color:var(--line-2); background:var(--bad-bg); }
+.b-maint { color:var(--warn); border-color:var(--line-2); background:var(--warn-bg); }
+
+/* 计数着色（工站头部 KPI 与卡片脚注共用） */
+.c-pass  { color:var(--ok); }
+.c-fail  { color:var(--bad); }
+.c-test  { color:var(--run); }
+.c-abort { color:var(--abort); }
+
+.pbar { height:4px; background:var(--track); border-radius:2px; overflow:hidden; }
+.pbar > i { display:block; height:100%; border-radius:2px;
+  background:linear-gradient(90deg,#1f6feb,#3fb6f0); transition:width .4s; }
+.pbar.wide { height:6px; }
+
+/* ==========================================================================
+   盘位网格（仅在展开细节时渲染）
+   ========================================================================== */
+.slot-grid { display:grid; gap:2px; }
+.slot-grid.cap1   { grid-template-columns:1fr; }
+.slot-grid.cap16  { grid-template-columns:repeat(16,13px); }
+.slot-grid.cap128 { grid-template-columns:repeat(16,9px); }
+.slot-grid.cap256 { grid-template-columns:repeat(16,9px); }
+
+.cell { border-radius:2px; cursor:pointer; transition:background .14s; background:var(--s-empty); }
+.slot-grid.cap16  .cell { width:13px; height:13px; }
+.slot-grid.cap128 .cell,
+.slot-grid.cap256 .cell { width:9px; height:9px; }
+.slot-grid.cap1   .cell {
+  height:38px; border-radius:var(--r-sm); display:flex; align-items:center; justify-content:center;
+  font-size:11px; color:var(--tx-3); overflow:hidden; white-space:nowrap; padding:0 8px;
+}
+.cell:hover { outline:2px solid var(--info); outline-offset:1px; z-index:3; position:relative; }
+.cell.no-sn { cursor:default; }
+.cell.no-sn:hover { outline:none; }
+.cell.pending-bad { box-shadow:0 0 0 2px var(--warn); }
+
+.s-empty   { background:var(--s-empty); }
+.s-testing { background:var(--s-testing); animation:pulse 1.7s ease-in-out infinite; }
+.s-pass    { background:var(--s-pass); }
+.s-fail    { background:var(--s-fail); }
+.s-abort   { background:var(--s-abort); }
+.s-maint   { background:var(--s-maint); }
+.s-damaged { background:var(--s-damaged); }
+.s-disabled{ background:var(--s-disabled); }
+
+/* ==========================================================================
+   机柜卡片（detail 模式下的机柜布局）
+   ========================================================================== */
+.cab-wrap { display:flex; flex-wrap:wrap; gap:9px; }
+.cab {
+  border:1px solid var(--line); border-radius:6px; background:var(--panel-2);
+  padding:7px 9px; content-visibility:auto; contain-intrinsic-size:auto 240px;
+}
+.cab-head {
+  display:flex; align-items:center; gap:8px; margin-bottom:5px; padding-bottom:5px;
+  border-bottom:1px solid var(--line); font-size:11.5px; font-weight:600;
+  font-variant-numeric:tabular-nums;
+}
+.cab-head .oc { font-size:10.5px; color:var(--tx-3); font-weight:400; }
+.cab.fault { border-color:var(--bad); }
+
+.srv { display:grid; grid-template-columns:56px 1fr 42px; align-items:center; gap:7px; padding:2px 0; }
+.srv + .srv { border-top:1px solid var(--line); }
+.srv .sid { font-size:10px; color:var(--tx-2); font-variant-numeric:tabular-nums;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.srv .cnt { font-size:10px; color:var(--tx-3); text-align:right; font-variant-numeric:tabular-nums; }
+.srv .cnt.full { color:var(--ok); }
+.srv .cnt.zero { color:var(--tx-3); opacity:.6; }
+
+/* ==========================================================================
+   智慧看板
+   ========================================================================== */
+.kpi-wall { display:grid; grid-template-columns:repeat(auto-fill,minmax(196px,1fr));
+  gap:11px; margin-bottom:15px; }
+
+.cab-wall { display:flex; flex-wrap:wrap; gap:9px; }
+.cab-mini {
+  border:1px solid var(--line); border-radius:6px; background:var(--panel-2);
+  padding:8px 10px; min-width:172px; cursor:pointer; transition:.15s;
+}
+.cab-mini:hover { border-color:var(--info); background:var(--panel-3); }
+.cab-mini .nm { font-size:11.5px; font-weight:600; display:flex; align-items:center; gap:6px; }
+.cab-mini .sub { font-size:10px; color:var(--tx-3); margin:3px 0 6px; }
+.cab-mini .strip { display:flex; gap:1px; height:9px; border-radius:2px; overflow:hidden; }
+.cab-mini .strip i { flex:1; background:var(--s-empty); }
+.cab-mini .strip i.p { background:var(--s-pass); }
+.cab-mini .strip i.f { background:var(--s-fail); }
+.cab-mini .strip i.t { background:var(--s-testing); }
+.cab-mini .strip i.x { background:var(--s-abort); }
+
+.heat-table { width:100%; border-collapse:collapse; font-size:11.5px; }
+.heat-table th, .heat-table td { padding:5px 8px; border:1px solid var(--line); text-align:center; }
+.heat-table th { background:var(--th); color:var(--tx-2); font-weight:500; }
+.heat-table td.hot0 { background:var(--panel-2); color:var(--tx-3); }
+.heat-table td.hot1 { background:var(--warn-bg); color:var(--warn); }
+.heat-table td.hot2 { background:var(--warn-bg); color:var(--warn); font-weight:600; }
+.heat-table td.hot3 { background:var(--bad-bg); color:var(--bad); font-weight:600; }
+
+.suggest-card {
+  border:1px solid var(--line-2); border-left:3px solid var(--info);
+  background:var(--panel); border-radius:var(--r-sm); padding:9px 13px;
+  font-size:11.5px; color:var(--tx-2); line-height:1.7; margin-bottom:8px;
+}
+.suggest-card.warn { border-left-color:var(--warn); }
+.suggest-card.bad  { border-left-color:var(--bad); }
+.suggest-card.ok   { border-left-color:var(--ok); }
+
+.bar-chart { background:var(--panel); border:1px solid var(--line);
+  border-radius:var(--r); padding:15px; }
+.bar-row { display:grid; grid-template-columns:118px 1fr 104px; align-items:center;
+  gap:11px; margin-bottom:9px; }
+.bar-row .bn { font-size:12px; display:flex; align-items:center; gap:6px; }
+.bar-row .bt { height:19px; background:var(--track); border-radius:3px; overflow:hidden; }
+.bar-row .bt > i { display:block; height:100%; border-radius:3px; transition:width .5s; }
+.bar-row .bv { text-align:right; font-size:11.5px; color:var(--tx-2);
+  font-variant-numeric:tabular-nums; }
+
+/* ==========================================================================
+   单块流转时间线（抽屉内）
+   ========================================================================== */
+.flow { position:relative; padding-left:26px; }
+.flow::before { content:''; position:absolute; left:8px; top:8px; bottom:14px;
+  width:2px; background:var(--line-2); }
+.fstep { position:relative; padding-bottom:16px; }
+.fstep .fdot { position:absolute; left:-24px; top:3px; width:12px; height:12px;
+  border-radius:50%; border:2px solid var(--bg-2); background:var(--s-empty); z-index:1; }
+.fstep.d-pass  .fdot { background:var(--s-pass); }
+.fstep.d-fail  .fdot { background:var(--s-fail); }
+.fstep.d-run   .fdot { background:var(--s-testing); animation:pulse 1.7s ease-in-out infinite; }
+.fstep.d-abort .fdot { background:var(--s-abort); }
+.fstep.d-skip  .fdot { background:var(--s-empty); }
+.fstep.cur .fdot { width:15px; height:15px; left:-25.5px;
+  box-shadow:0 0 0 3px var(--info-bg); }
+.fstep .fn { display:flex; align-items:center; gap:9px; flex-wrap:wrap; margin-bottom:3px; }
+.fstep .fn .nm { font-size:13px; font-weight:600; }
+.fstep .fm { font-size:11.5px; color:var(--tx-3); }
+.fstep .fmeta { font-size:11px; color:var(--tx-2); margin-top:3px; }
+.fstep.bypass { opacity:.85; }
+.fstep.bypass .nm::after { content:'旁路'; font-size:9.5px; color:var(--tx-3);
+  border:1px dashed var(--line-2); border-radius:3px; padding:0 4px; margin-left:5px; }

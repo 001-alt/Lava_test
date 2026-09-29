@@ -1,0 +1,21 @@
+{
+  "name": "lava-test-board",
+  "version": "1.0.0",
+  "description": "Lava_test 固态硬盘全段测试看板 —— 源码多模块，构建为单文件 HTML",
+  "private": true,
+  "scripts": {
+    "build": "node build.js",
+    "build:check": "node build.js --check",
+    "test": "node tools/test-domain.js",
+    "test:smoke": "node tools/smoke-test.js",
+    "test:bridge": "python bridge/tests/test_api.py",
+    "verify": "node build.js --check && node tools/test-domain.js && node tools/smoke-test.js",
+    "watch": "node -e \"const{execSync}=require('child_process');const fs=require('fs');console.log('[watch] 监听 src/ 变化…');let t=null;fs.watch('src',{recursive:true},(e,f)=>{if(!/\\.(js|css|html)$/.test(f||''))return;clearTimeout(t);t=setTimeout(()=>{try{execSync('node build.js --check',{stdio:'inherit'})}catch(x){}},250)})\"",
+    "test:e2e": "node tools/e2e-sim.js",
+    "verify:all": "npm run verify && node tools/e2e-sim.js"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "comment": "本项目无运行时依赖：产物是单文件 HTML，双击即用。构建与测试只用 Node 标准库。"
+}

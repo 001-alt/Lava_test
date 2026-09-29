@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark">
+<title>Lava_test 固态硬盘全段测试看板</title>
+<!-- @@STYLES@@ -->
+</head>
+<body>
+
+<!-- ========================================================================
+     顶栏
+     ======================================================================== -->
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-dot"></span>
+    <b>Lava</b>_test
+    <span class="brand-sub">固态硬盘全段测试看板</span>
+  </div>
+
+  <nav class="view-tabs" id="viewTabs"></nav>
+
+  <div class="spacer"></div>
+
+  <div class="topbar-actions">
+    <span class="chip" id="storageChip" title="存储后端"></span>
+    <span class="chip" id="bridgeChip" title="桥接服务状态">桥接未配置</span>
+    <span class="chip" id="tickChip" title="自动刷新节拍">自动刷新：关</span>
+    <button class="btn sm theme-btn" id="btnTheme" title="切换主题"></button>
+    <button class="btn sm" id="btnAutoRefresh" title="周期刷新视图并巡检机台">自动刷新</button>
+    <button class="btn sm" id="btnManualRefresh" title="立即刷新视图">刷新</button>
+    <button class="btn sm" id="btnLedger" title="导入设备台账 / 维护设备 IP 映射">设备台账</button>
+    <button class="btn sm" id="btnExportCenter">导出中心</button>
+    <button class="btn sm" id="btnSettings">系统设置</button>
+    <button class="btn sm primary" id="btnMock" title="生成一套完整的模拟数据用于界面验收">生成模拟数据</button>
+  </div>
+</header>
+
+<!-- ========================================================================
+     工站总览条 —— 七个工站各带利用率，点击筛选
+     ======================================================================== -->
+<div class="station-strip" id="stationStrip"></div>
+
+<!-- ========================================================================
+     视图容器（内容由 views/*.js 渲染）
+     ======================================================================== -->
+<main class="main" id="main">
+
+  <section class="view active" id="view-floor">
+    <div class="legend" id="floorLegend">
+      <span><i class="sw s-empty"></i>空位</span>
+      <span><i class="sw s-testing"></i>在测</span>
+      <span><i class="sw s-pass"></i>通过</span>
+      <span><i class="sw s-fail"></i>失败</span>
+      <span><i class="sw s-abort"></i>异常终止</span>
+      <span><i class="sw s-maint"></i>维护</span>
+      <span><i class="sw s-damaged"></i>损坏</span>
+      <span class="legend-hint">点盘位看单块流转 · 点工站标题折叠</span>
+      <span class="spacer"></span>
+      <label class="legend-chk" title="产线不会一直满测，空载设备默认隐藏以减少干扰">
+        <input type="checkbox" id="chkShowEmpty"> 显示空载设备
+      </label>
+      <button class="btn xs" id="btnFoldAll" title="折叠或展开所有工站分区">折叠/展开工站</button>
+    </div>
+    <div id="floorBody"></div>
+  </section>
+
+  <section class="view" id="view-board"><div id="boardBody"></div></section>
+  <section class="view" id="view-daily"><div id="dailyBody"></div></section>
+  <section class="view" id="view-stats"><div id="statsBody"></div></section>
+  <section class="view" id="view-bad"><div id="badBody"></div></section>
+  <section class="view" id="view-error"><div id="errorBody"></div></section>
+  <section class="view" id="view-pull"><div id="pullBody"></div></section>
+  <section class="view" id="view-wo"><div id="woBody"></div></section>
+  <section class="view" id="view-log"><div id="logBody"></div></section>
+  <section class="view" id="view-trace"><div id="traceBody"></div></section>
+
+</main>
+
+<!-- ========================================================================
+     右侧抽屉（盘位详情 / 单块流转）
+     ======================================================================== -->
+<div class="mask" id="mask"></div>
+<div class="drawer" id="drawer"></div>
+
+<!-- 模态框挂载点（modals/*.js 动态生成） -->
+<div id="modalRoot"></div>
+
+<!-- 提示 -->
+<div id="toastRoot"></div>
+
+<!-- @@SCRIPTS@@ -->
+</body>
+</html>
