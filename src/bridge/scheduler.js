@@ -65,7 +65,7 @@ const Scheduler = (() => {
     try { await App.switchView(App.state.curView); } catch (e) { }
     // 顺带拉一次巡检（自动刷新开启时由这里统一驱动）
     if (Bridge.configured()) {
-      await Ssh.poll(true);
+      if ((await Bridge.health()).ok) await Ssh.poll(true);
       App.refreshStatus();
     }
   });
@@ -73,6 +73,7 @@ const Scheduler = (() => {
   const tickSsh = guard('ssh', async () => {
     if (!visible()) return;
     if (!Bridge.configured()) return;
+    if (!(await Bridge.health()).ok) return;
     await Ssh.poll(true);
     Bus.emit(EVT.SLOTS_CHANGED, { keys: null });   // 让平面图重绘状态
   });
@@ -81,6 +82,7 @@ const Scheduler = (() => {
     if (!visible()) return;
     if (!Bridge.configured()) return;
     if (!App.cfg.settings.autoPull) return;
+    if (!(await Bridge.health()).ok) return;
     await FtpChannel.pull('ftp', { onlyNew: App.cfg.settings.onlyNew !== false });
   });
 

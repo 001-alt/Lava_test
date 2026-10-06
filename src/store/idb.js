@@ -39,18 +39,17 @@ const Idb = (() => {
   function available() {
     if (_available !== null) return Promise.resolve(_available);
     return new Promise(resolve => {
-      if (typeof indexedDB === 'undefined' || !indexedDB) {
-        _available = false;
-        return resolve(false);
-      }
       let done = false;
+      let timer;
       const finish = ok => {
         if (done) return;
         done = true;
+        clearTimeout(timer);
         _available = ok;
         resolve(ok);
       };
       try {
+        if (typeof indexedDB === 'undefined' || !indexedDB) return finish(false);
         const req = indexedDB.open('__lava_probe__', 1);
         req.onerror = () => finish(false);
         req.onblocked = () => finish(false);
@@ -59,7 +58,7 @@ const Idb = (() => {
           finish(true);
         };
         // file:// 下 Chrome 可能既不报错也不回调，加超时兜底
-        setTimeout(() => finish(false), 2500);
+        timer = setTimeout(() => finish(false), 1000);
       } catch (e) {
         finish(false);
       }
@@ -141,6 +140,8 @@ const Idb = (() => {
 
         req.onsuccess = () => {
           const db = req.result;
+          // 超时后 Repo 已选择降级后端，迟到的连接不能重新接管存储。
+          if (settled) { db.close(); return; }
 
           /* 结构自愈：打开后核对所有声明的对象仓是否都在。
              版本号忘了升、或别的标签页把库改成了旧结构时，
@@ -160,6 +161,7 @@ const Idb = (() => {
             const up = indexedDB.open(IDB_NAME, Math.max(curVer + 1, IDB_VERSION));
             up.onupgradeneeded = req.onupgradeneeded;
             up.onsuccess = () => {
+              if (settled) { up.result.close(); return; }
               _db = up.result;
               _db.onversionchange = () => { try { _db.close(); } catch (e) { } _db = null; };
               const still = Object.keys(STORES)
@@ -174,6 +176,7 @@ const Idb = (() => {
               }
             };
             up.onerror = () => {
+              if (settled) return;
               console.error('[Idb] 升级失败，将重建数据库');
               _recreate(resolve, reject, missing);
             };
@@ -203,7 +206,7 @@ const Idb = (() => {
           settled = true;
           _openPromise = null;
           reject(new Error('IndexedDB 打开超时'));
-        }, 8000);
+        }, 3000);
 
       } catch (e) {
         _openPromise = null;

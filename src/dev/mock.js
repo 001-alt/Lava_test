@@ -87,7 +87,7 @@ const Mock = (() => {
         let state;
         if (eqState === 'fault' && i < 4) state = 'abort';
         else if (r < 0.70) state = 'testing';
-        else if (r < 0.92) state = 'pass';
+        else if (r < 0.955) state = 'pass';
         else if (r < 0.965) state = 'fail';
         else state = 'abort';
 
@@ -124,6 +124,37 @@ const Mock = (() => {
       }
 
       if (o.onProgress && done % 4000 < eq.capacity) o.onProgress(done, total, eq.station);
+    });
+
+    /* 按工站 / 日期 / 工单限制 FAIL 数量，防止小样本的随机波动让良率低于 95%。
+       口径与看板一致：PASS / (PASS + FAIL)，在测与 ABORT 不入分母。
+       在派生不良前同步修正盘位和记录，保证各处显示的结果一致。 */
+    const resultGroups = new Map();
+    const slotsBySn = new Map(slotBatch.map(x => [x.sn, x]));
+    records.forEach(rec => {
+      if (rec.result !== 'PASS' && rec.result !== 'FAIL') return;
+      const key = JSON.stringify([rec.station, rec.day, rec.woNo]);
+      if (!resultGroups.has(key)) resultGroups.set(key, { total: 0, fails: [] });
+      const group = resultGroups.get(key);
+      group.total++;
+      if (rec.result === 'FAIL') group.fails.push(rec);
+    });
+    resultGroups.forEach(group => {
+      const maxFails = Math.floor(group.total / 20);
+      // 用同一随机种子选取保留的失败样本，避免偏向前面的设备。
+      for (let i = group.fails.length - 1; i > 0; i--) {
+        const j = ri(0, i);
+        [group.fails[i], group.fails[j]] = [group.fails[j], group.fails[i]];
+      }
+      group.fails.slice(maxFails).forEach(rec => {
+        rec.result = 'PASS';
+        rec.errCode = '';
+        const slot = slotsBySn.get(rec.sn);
+        slot.state = 'pass';
+        slot.result = 'pass';
+        slot.errCode = '';
+        slot.retestRound = 0;
+      });
     });
 
     /* 不良记录：从 FAIL 盘位派生 */

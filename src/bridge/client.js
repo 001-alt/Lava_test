@@ -122,29 +122,63 @@ const Bridge = (() => {
      -------------------------------------------------------------------------- */
   let _health = null;
   let _healthAt = 0;
+  let _healthKey = '';
+  let _healthFlight = null;
 
-  async function health(force) {
-    if (!force && _health && Date.now() - _healthAt < 15000) return _health;
+  function healthKey() { return base() + '\n' + token(); }
+
+  // 同步快照供界面先画出来；地址或令牌改变后不沿用旧连接状态。
+  function peekHealth() {
+    if (_health && _healthKey === healthKey()) return _health;
+    return { ok: false, configured: configured(), pending: configured(),
+             error: configured() ? '' : '未配置桥接地址' };
+  }
+
+  function health(force) {
+    const key = healthKey();
+    if (_healthFlight && _healthFlight.key === key) return _healthFlight.promise;
+    if (!force && _health && _healthKey === key && Date.now() - _healthAt < 15000) {
+      return Promise.resolve(_health);
+    }
     if (!configured()) {
       _health = { ok: false, configured: false, error: '未配置桥接地址' };
+      _healthKey = key;
       _healthAt = Date.now();
-      return _health;
+      return Promise.resolve(_health);
     }
-    try {
-      const h = await api('/api/health', null, { timeout: 8000 });
-      _health = Object.assign({ configured: true }, h);
-    } catch (e) {
-      _health = { ok: false, configured: true, error: e.message, kind: e.kind };
-    }
-    _healthAt = Date.now();
-    return _health;
+    const flight = { key, promise: null };
+    flight.promise = (async () => {
+      let timer, result;
+      try {
+        // 同时限制 JSON 响应体的等待；网络检查永远不能拖住本地界面。
+        const deadline = new Promise((resolve, reject) => {
+          timer = setTimeout(() => reject(new BridgeError('桥接连接检测超时', 'timeout')), 1500);
+        });
+        const h = await Promise.race([api('/api/health', null, { timeout: 1500 }), deadline]);
+        result = Object.assign({ configured: true }, h);
+      } catch (e) {
+        result = { ok: false, configured: true, error: e.message, kind: e.kind };
+      } finally {
+        clearTimeout(timer);
+      }
+      if (key === healthKey()) {
+        _health = result;
+        _healthKey = key;
+        _healthAt = Date.now();
+      }
+      if (_healthFlight === flight) _healthFlight = null;
+      return result;
+    })();
+    _healthFlight = flight;
+    return flight.promise;
   }
 
   /* 返回人能看的一句话状态，供顶栏胶囊显示 */
   function healthLabel(h) {
     if (!h) return '桥接：未知';
     if (!h.configured) return '桥接未配置';
-    if (!h.ok) return '桥接：' + (h.kind === 'unreachable' ? '未启动' : (h.error || '异常'));
+    if (h.pending) return '桥接：检测中';
+    if (!h.ok) return h.kind === 'unreachable' ? '离线模式（桥接未启动）' : '离线模式（桥接不可用）';
     const parts = [];
     parts.push('v' + (h.version || '?'));
     if (h.ftpConfigured) parts.push(h.ftpConnected ? 'FTP正常' : 'FTP异常');
@@ -154,7 +188,7 @@ const Bridge = (() => {
 
   function healthChipClass(h) {
     if (!h || !h.configured) return 'chip';
-    if (!h.ok) return 'chip bad';
+    if (!h.ok) return 'chip warn';
     if (h.ftpConfigured && !h.ftpConnected) return 'chip warn';
     return 'chip ok';
   }
@@ -184,7 +218,7 @@ const Bridge = (() => {
   return {
     base, configured, token, qs,
     request, api, post, fetchBin, fetchText,
-    health, healthLabel, healthChipClass,
+    health, peekHealth, healthLabel, healthChipClass,
     pushConfig, pushHosts,
     BridgeError
   };

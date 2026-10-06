@@ -317,7 +317,7 @@ const App = (() => {
     const bchip = document.getElementById('bridgeChip');
     if (bchip) {
       if (typeof Bridge !== 'undefined') {
-        const h = await Bridge.health();
+        const h = Bridge.peekHealth();
         bchip.textContent = Bridge.healthLabel(h);
         bchip.className = Bridge.healthChipClass(h);
         bchip.title = h.ok
@@ -326,7 +326,8 @@ const App = (() => {
             (h.sshHosts ? '\n巡检机台 ' + h.sshHosts + ' 台' : '') +
             (h.paramiko === false ? '\n未装 paramiko，SSH 仅支持密钥认证' : '')
           : (h.configured
-              ? '桥接不可达：' + (h.error || '') + '\n请运行 bridge\\启动桥接服务.bat'
+              ? (h.pending ? '正在后台检测桥接连接' : '离线使用：' + (h.error || '')) +
+                '\n本地查看、台账导入和导出可正常使用；SSH / FTP 实时接入需要桥接服务。'
               : '尚未配置桥接服务\n浏览器无法直连 FTP/SSH，需经桥接转发');
       } else {
         bchip.textContent = '桥接未配置';
@@ -397,6 +398,7 @@ const App = (() => {
     if (typeof ViewBad !== 'undefined' && ViewBad.bind) ViewBad.bind();
     if (typeof ViewWo !== 'undefined' && ViewWo.bind) ViewWo.bind();
     if (typeof ViewTrace !== 'undefined' && ViewTrace.bind) ViewTrace.bind();
+    if (typeof ViewPull !== 'undefined' && ViewPull.bind) ViewPull.bind();
 
     // 顶栏按钮
     bindTopbar();
@@ -407,7 +409,10 @@ const App = (() => {
     // 调用方（含冒烟测试）会读到空的视图容器
     const cur = LocalStore.ui.get('curView', 'floor');
     await switchView(VIEWS.some(v => v.key === cur) ? cur : 'floor');
-    await refreshStatus();
+    refreshStatus().catch(e => console.warn('[App] 状态更新失败：', e.message));
+    // 网络探测不参与启动：离线时首屏和所有本地按钮仍立即可用。
+    Bridge.health().then(() => refreshStatus()).catch(e =>
+      console.warn('[App] 桥接状态更新失败：', e.message));
 
     // 首屏渲染完成，此后允许增量补丁
     state.canPatch = true;
@@ -444,6 +449,8 @@ const App = (() => {
       loadAll().then(() => {
         switchView(state.curView);
         refreshStatus();
+        Bridge.health().then(() => refreshStatus()).catch(e =>
+          console.warn('[App] 桥接状态更新失败：', e.message));
         Toast.ok('已刷新');
       });
     });

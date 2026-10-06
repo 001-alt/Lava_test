@@ -183,6 +183,9 @@ global.__LAVA = {
 `;
 
 head('1. 加载与初始化');
+// 模拟桥接请求一直没有响应：启动必须只依赖本地存储与首屏。
+global.fetch = () => new Promise(() => {});
+const bootStartedAt = Date.now();
 try {
   eval(src + probe);
   A = global.__LAVA;
@@ -201,6 +204,8 @@ const { App, Repo, Mock, Topology, Capacity, Sampling, DefectEngine,
   try {
     await App.boot();
     ok(true, 'App.boot() 无异常');
+    ok(Date.now() - bootStartedAt < 1000 && App.canPatch,
+       '桥接请求无响应时，本地首屏仍在 1 秒内完成启动');
     ok(Repo.backend() === 'memory', '存储后端正确降级为 memory（无 localStorage / indexedDB）',
        Repo.backend());
     ok(App.cfg != null, '配置已加载');
@@ -240,6 +245,31 @@ const { App, Repo, Mock, Topology, Capacity, Sampling, DefectEngine,
   ok(r.badPending > 0, '存在待确认不良，可验证待确认队列');
   ok(r.error > 0, '报错记录 ' + r.error + ' 条');
   ok(r.workOrders === 3, '工单 ' + r.workOrders + ' 个');
+
+  // 多个种子检查实际落库数据；工站、日期和工单的组合也必须达到下限。
+  for (const seed of [20260929, 1, 42, 20261006]) {
+    if (seed !== 20260929) await Mock.generate(App.cfg, { seed });
+    const generatedRecords = await Repo.query('records');
+    const generatedSlots = await Repo.getAllSlots();
+    const groups = new Map();
+    generatedRecords.forEach(rec => {
+      if (!['PASS', 'FAIL'].includes(rec.result)) return;
+      const key = JSON.stringify([rec.station, rec.day, rec.woNo]);
+      if (!groups.has(key)) groups.set(key, { pass: 0, fail: 0 });
+      groups.get(key)[rec.result.toLowerCase()]++;
+    });
+    ok(groups.size > 0 && Array.from(groups.values()).every(c =>
+      Capacity.yieldOf(c).pct >= 0.95), '种子 ' + seed + '：各工站 / 日期 / 工单良率 ≥ 95%');
+    const slotsBySn = new Map(generatedSlots.map(s => [s.sn, s]));
+    ok(generatedRecords.every(rec => {
+      const slot = slotsBySn.get(rec.sn);
+      return slot && slot.state.toUpperCase() === rec.result && slot.errCode === rec.errCode;
+    }), '种子 ' + seed + '：盘位与测试记录结果一致');
+    const generatedBad = await Repo.query('bad');
+    ok(generatedBad.every(b => slotsBySn.get(b.sn).state === 'fail'),
+       '种子 ' + seed + '：不良记录只关联实际失败盘位');
+  }
+  await Mock.generate(App.cfg, { seed: 20260929 });
 
   /* ====================================================================== */
   head('3. 数据装载');
@@ -685,6 +715,9 @@ const { App, Repo, Mock, Topology, Capacity, Sampling, DefectEngine,
     };
 
     try {
+      // 等初始挂起检查超时，避免它干扰下面的路由桩。
+      const offline = await Bridge.health();
+      ok(!offline.ok, '挂起的桥接检查会返回离线状态');
       /* 未配置桥接时应当明确报「未配置」而不是报网络错误 */
       App.cfg.channels.ftp.bridgeUrl = '';
       const h0 = await Bridge.health(true);
@@ -704,7 +737,28 @@ const { App, Repo, Mock, Topology, Capacity, Sampling, DefectEngine,
          '桥接未启动时归类为 unreachable 而非笼统失败');
       ok(Bridge.healthLabel(h2).indexOf('未启动') >= 0,
          '未启动时的文案：' + Bridge.healthLabel(h2));
+      const downCalls = calls.length;
+      await Bridge.health();
+      ok(calls.length === downCalls, '离线检查使用缓存，避免重复请求');
+      const routedFetch = global.fetch;
+      let hangingCalls = 0;
+      global.fetch = () => { hangingCalls++; return new Promise(() => {}); };
+      const pending = Bridge.health(true);
+      const shared = Bridge.health(true);
+      ok(pending === shared && hangingCalls === 1, '并发健康检查共用一个请求');
+      const viewStartedAt = Date.now();
+      await App.switchView('pull');
+      ok(Date.now() - viewStartedAt < 500 && _els.pullBody.innerHTML.includes('离线模式'),
+         '桥接无响应时，实时拉取页立即显示本地内容');
+      const hTimeout = await pending;
+      ok(hTimeout.kind === 'timeout', '桥接请求永久挂起时检查仍按时结束');
+      global.fetch = routedFetch;
       mode = 'ok';
+      const recovered = await Bridge.health(true);
+      ok(recovered.ok, '启动服务后强制检测可恢复在线');
+      App.cfg.channels.ftp.bridgeUrl = 'http://127.0.0.1:8771';
+      ok(Bridge.peekHealth().pending, '修改桥接地址后不会显示旧地址的在线状态');
+      App.cfg.channels.ftp.bridgeUrl = 'http://127.0.0.1:8770';
 
       /* SSH 快照应用 */
       const snap = await Ssh.poll(true);
@@ -815,6 +869,32 @@ const { App, Repo, Mock, Topology, Capacity, Sampling, DefectEngine,
        这里做两层静态检查，把这类问题挡在构建阶段。 */
     const idbSrc = fs.readFileSync(
       path.join(__dirname, '..', 'src', 'store', 'idb.js'), 'utf8');
+    const storageVm = require('vm');
+    const blockedContext = storageVm.createContext({ console, setTimeout, clearTimeout });
+    Object.defineProperty(blockedContext, 'indexedDB', {
+      get() { throw new Error('Storage access denied'); }
+    });
+    storageVm.runInContext(idbSrc + '\nthis.testIdb = Idb;', blockedContext);
+    ok(await blockedContext.testIdb.available() === false,
+       '浏览器拒绝访问 IndexedDB 时正常降级，不中断启动');
+    let openRequest, lateClosed = false;
+    const stalledContext = storageVm.createContext({
+      console, IDB_NAME: 'test', IDB_VERSION: 2,
+      // 缩短测试时钟；模拟数据库始终不返回事件。
+      setTimeout: fn => setTimeout(fn, 10), clearTimeout,
+      indexedDB: { open() { openRequest = {}; return openRequest; } }
+    });
+    storageVm.runInContext(idbSrc + '\nthis.testIdb = Idb;', stalledContext);
+    ok(await stalledContext.testIdb.available() === false,
+       'IndexedDB 探测不返回事件时会结束等待');
+    let openTimedOut = false;
+    try { await stalledContext.testIdb.open(); }
+    catch (e) { openTimedOut = /超时/.test(e.message); }
+    ok(openTimedOut, '数据库打开不返回事件时会结束等待');
+    openRequest.result = { close() { lateClosed = true; } };
+    openRequest.onsuccess();
+    ok(lateClosed && !stalledContext.testIdb.isOpen(),
+       '超时后的迟到连接关闭，不影响已经选择的降级存储');
     const declared = new Set(
       (idbSrc.match(/^\s{4}([a-z]+):\s*\{\s*keyPath:/gm) || [])
         .map(s => s.trim().split(':')[0]));

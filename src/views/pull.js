@@ -10,6 +10,7 @@ const ViewPull = (() => {
   let _scan = null;          // 最近一次扫描结果
   let _log = [];             // 运行日志（界面下方滚动区）
   let _pollTimer = null;
+  let _renderSeq = 0;
 
   function log(msg, cls) {
     _log.unshift({ t: Util.nowStr(), msg, cls: cls || '' });
@@ -29,12 +30,14 @@ const ViewPull = (() => {
   /* --------------------------------------------------------------------------
      渲染
      -------------------------------------------------------------------------- */
-  async function render() {
+  async function render(checkConnection = true) {
+    const seq = ++_renderSeq;
     await App.ensureRecords('logindex');
     const cfg = App.cfg;
     const ch = cfg.channels || {};
-    const h = await Bridge.health(true);
+    const h = Bridge.peekHealth();
     const st = await FtpChannel.status();
+    if (seq !== _renderSeq) return;
     const sshSnap = Ssh.lastAt() ? { at: Ssh.lastAt() } : null;
     const sshSum = (App.state.lastSshSummary) || {};
 
@@ -55,13 +58,10 @@ const ViewPull = (() => {
       '</div>' +
 
       (h.ok ? '' :
-        '<div class="note ' + (h.configured ? 'bad' : 'warn') + '">' +
-          (h.configured
-            ? '<b>桥接服务不可达</b>：' + Util.esc(h.error || '') +
-              '<br>请确认已运行 <code>bridge\\启动桥接服务.bat</code>，' +
-              '且地址填写正确（默认 <code>http://127.0.0.1:8770</code>）。'
-            : '<b>尚未配置桥接服务</b>。浏览器无法直接连接 FTP 与机台 SSH，' +
-              '必须经本机桥接转发。<br>部署方式见「部署说明」。') +
+        '<div class="note warn">' +
+          (h.pending ? '<b>正在后台检测连接</b>。' : '<b>当前为离线模式</b>。' + Util.esc(h.error || '')) +
+          '<br>可正常查看本地数据、导入设备台账、管理工单和导出备份。' +
+          'SSH 巡检、FTP 和目录扫描需启动桥接服务；启动后点击「检测连接」。' +
         '</div>') +
 
       '<div class="cards">' +
@@ -108,6 +108,12 @@ const ViewPull = (() => {
       '<div class="section-title">运行日志</div>' +
       '<div class="ft-runlog-box" id="pullRunLog">' + runLogHtml() + '</div>'
     );
+    if (checkConnection) {
+      Bridge.health().then(() => {
+        App.refreshStatus();
+        if (seq === _renderSeq && App.state.curView === 'pull') return render(false);
+      }).catch(e => console.warn('[ViewPull] 状态更新失败：', e.message));
+    }
   }
 
   function card(lbl, val, sub, extra) {
@@ -199,6 +205,11 @@ const ViewPull = (() => {
       Toast.warn('请先在「接入设置」里填写桥接地址');
       return false;
     }
+    const h = await Bridge.health();
+    if (!h.ok) {
+      Toast.warn('当前为离线模式。实时接入需启动桥接服务，再点击「检测连接」。');
+      return false;
+    }
     try { await Bridge.pushConfig(); return true; }
     catch (e) { Toast.error('下发配置失败：' + e.message); return false; }
   }
@@ -206,6 +217,7 @@ const ViewPull = (() => {
   async function probe() {
     log('开始检测桥接连接…');
     const h = await Bridge.health(true);
+    App.refreshStatus();
     if (!h.ok) {
       log('桥接不可达：' + (h.error || ''), 'err');
       Toast.error(h.error || '桥接不可达');

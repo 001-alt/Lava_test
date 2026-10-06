@@ -3,7 +3,7 @@
 <head>
 <!--
   Lava_test 固态硬盘全段测试看板
-  构建时间：2026/9/29 17:26:18
+  构建时间：2026/10/6 18:13:47
   构建来源：src/ 多模块合并（请勿直接改本文件，改 src/ 后跑 node build.js）
   模块数：52 个 JS / 4 个 CSS
 -->
@@ -2321,18 +2321,17 @@ const Idb = (() => {
   function available() {
     if (_available !== null) return Promise.resolve(_available);
     return new Promise(resolve => {
-      if (typeof indexedDB === 'undefined' || !indexedDB) {
-        _available = false;
-        return resolve(false);
-      }
       let done = false;
+      let timer;
       const finish = ok => {
         if (done) return;
         done = true;
+        clearTimeout(timer);
         _available = ok;
         resolve(ok);
       };
       try {
+        if (typeof indexedDB === 'undefined' || !indexedDB) return finish(false);
         const req = indexedDB.open('__lava_probe__', 1);
         req.onerror = () => finish(false);
         req.onblocked = () => finish(false);
@@ -2341,7 +2340,7 @@ const Idb = (() => {
           finish(true);
         };
         // file:// 下 Chrome 可能既不报错也不回调，加超时兜底
-        setTimeout(() => finish(false), 2500);
+        timer = setTimeout(() => finish(false), 1000);
       } catch (e) {
         finish(false);
       }
@@ -2423,6 +2422,8 @@ const Idb = (() => {
 
         req.onsuccess = () => {
           const db = req.result;
+          // 超时后 Repo 已选择降级后端，迟到的连接不能重新接管存储。
+          if (settled) { db.close(); return; }
 
           /* 结构自愈：打开后核对所有声明的对象仓是否都在。
              版本号忘了升、或别的标签页把库改成了旧结构时，
@@ -2442,6 +2443,7 @@ const Idb = (() => {
             const up = indexedDB.open(IDB_NAME, Math.max(curVer + 1, IDB_VERSION));
             up.onupgradeneeded = req.onupgradeneeded;
             up.onsuccess = () => {
+              if (settled) { up.result.close(); return; }
               _db = up.result;
               _db.onversionchange = () => { try { _db.close(); } catch (e) { } _db = null; };
               const still = Object.keys(STORES)
@@ -2456,6 +2458,7 @@ const Idb = (() => {
               }
             };
             up.onerror = () => {
+              if (settled) return;
               console.error('[Idb] 升级失败，将重建数据库');
               _recreate(resolve, reject, missing);
             };
@@ -2485,7 +2488,7 @@ const Idb = (() => {
           settled = true;
           _openPromise = null;
           reject(new Error('IndexedDB 打开超时'));
-        }, 8000);
+        }, 3000);
 
       } catch (e) {
         _openPromise = null;
@@ -6823,29 +6826,63 @@ const Bridge = (() => {
      -------------------------------------------------------------------------- */
   let _health = null;
   let _healthAt = 0;
+  let _healthKey = '';
+  let _healthFlight = null;
 
-  async function health(force) {
-    if (!force && _health && Date.now() - _healthAt < 15000) return _health;
+  function healthKey() { return base() + '\n' + token(); }
+
+  // 同步快照供界面先画出来；地址或令牌改变后不沿用旧连接状态。
+  function peekHealth() {
+    if (_health && _healthKey === healthKey()) return _health;
+    return { ok: false, configured: configured(), pending: configured(),
+             error: configured() ? '' : '未配置桥接地址' };
+  }
+
+  function health(force) {
+    const key = healthKey();
+    if (_healthFlight && _healthFlight.key === key) return _healthFlight.promise;
+    if (!force && _health && _healthKey === key && Date.now() - _healthAt < 15000) {
+      return Promise.resolve(_health);
+    }
     if (!configured()) {
       _health = { ok: false, configured: false, error: '未配置桥接地址' };
+      _healthKey = key;
       _healthAt = Date.now();
-      return _health;
+      return Promise.resolve(_health);
     }
-    try {
-      const h = await api('/api/health', null, { timeout: 8000 });
-      _health = Object.assign({ configured: true }, h);
-    } catch (e) {
-      _health = { ok: false, configured: true, error: e.message, kind: e.kind };
-    }
-    _healthAt = Date.now();
-    return _health;
+    const flight = { key, promise: null };
+    flight.promise = (async () => {
+      let timer, result;
+      try {
+        // 同时限制 JSON 响应体的等待；网络检查永远不能拖住本地界面。
+        const deadline = new Promise((resolve, reject) => {
+          timer = setTimeout(() => reject(new BridgeError('桥接连接检测超时', 'timeout')), 1500);
+        });
+        const h = await Promise.race([api('/api/health', null, { timeout: 1500 }), deadline]);
+        result = Object.assign({ configured: true }, h);
+      } catch (e) {
+        result = { ok: false, configured: true, error: e.message, kind: e.kind };
+      } finally {
+        clearTimeout(timer);
+      }
+      if (key === healthKey()) {
+        _health = result;
+        _healthKey = key;
+        _healthAt = Date.now();
+      }
+      if (_healthFlight === flight) _healthFlight = null;
+      return result;
+    })();
+    _healthFlight = flight;
+    return flight.promise;
   }
 
   /* 返回人能看的一句话状态，供顶栏胶囊显示 */
   function healthLabel(h) {
     if (!h) return '桥接：未知';
     if (!h.configured) return '桥接未配置';
-    if (!h.ok) return '桥接：' + (h.kind === 'unreachable' ? '未启动' : (h.error || '异常'));
+    if (h.pending) return '桥接：检测中';
+    if (!h.ok) return h.kind === 'unreachable' ? '离线模式（桥接未启动）' : '离线模式（桥接不可用）';
     const parts = [];
     parts.push('v' + (h.version || '?'));
     if (h.ftpConfigured) parts.push(h.ftpConnected ? 'FTP正常' : 'FTP异常');
@@ -6855,7 +6892,7 @@ const Bridge = (() => {
 
   function healthChipClass(h) {
     if (!h || !h.configured) return 'chip';
-    if (!h.ok) return 'chip bad';
+    if (!h.ok) return 'chip warn';
     if (h.ftpConfigured && !h.ftpConnected) return 'chip warn';
     return 'chip ok';
   }
@@ -6885,7 +6922,7 @@ const Bridge = (() => {
   return {
     base, configured, token, qs,
     request, api, post, fetchBin, fetchText,
-    health, healthLabel, healthChipClass,
+    health, peekHealth, healthLabel, healthChipClass,
     pushConfig, pushHosts,
     BridgeError
   };
@@ -7423,7 +7460,7 @@ const Scheduler = (() => {
     try { await App.switchView(App.state.curView); } catch (e) { }
     // 顺带拉一次巡检（自动刷新开启时由这里统一驱动）
     if (Bridge.configured()) {
-      await Ssh.poll(true);
+      if ((await Bridge.health()).ok) await Ssh.poll(true);
       App.refreshStatus();
     }
   });
@@ -7431,6 +7468,7 @@ const Scheduler = (() => {
   const tickSsh = guard('ssh', async () => {
     if (!visible()) return;
     if (!Bridge.configured()) return;
+    if (!(await Bridge.health()).ok) return;
     await Ssh.poll(true);
     Bus.emit(EVT.SLOTS_CHANGED, { keys: null });   // 让平面图重绘状态
   });
@@ -7439,6 +7477,7 @@ const Scheduler = (() => {
     if (!visible()) return;
     if (!Bridge.configured()) return;
     if (!App.cfg.settings.autoPull) return;
+    if (!(await Bridge.health()).ok) return;
     await FtpChannel.pull('ftp', { onlyNew: App.cfg.settings.onlyNew !== false });
   });
 
@@ -10009,6 +10048,7 @@ const ViewPull = (() => {
   let _scan = null;          // 最近一次扫描结果
   let _log = [];             // 运行日志（界面下方滚动区）
   let _pollTimer = null;
+  let _renderSeq = 0;
 
   function log(msg, cls) {
     _log.unshift({ t: Util.nowStr(), msg, cls: cls || '' });
@@ -10028,12 +10068,14 @@ const ViewPull = (() => {
   /* --------------------------------------------------------------------------
      渲染
      -------------------------------------------------------------------------- */
-  async function render() {
+  async function render(checkConnection = true) {
+    const seq = ++_renderSeq;
     await App.ensureRecords('logindex');
     const cfg = App.cfg;
     const ch = cfg.channels || {};
-    const h = await Bridge.health(true);
+    const h = Bridge.peekHealth();
     const st = await FtpChannel.status();
+    if (seq !== _renderSeq) return;
     const sshSnap = Ssh.lastAt() ? { at: Ssh.lastAt() } : null;
     const sshSum = (App.state.lastSshSummary) || {};
 
@@ -10054,13 +10096,10 @@ const ViewPull = (() => {
       '</div>' +
 
       (h.ok ? '' :
-        '<div class="note ' + (h.configured ? 'bad' : 'warn') + '">' +
-          (h.configured
-            ? '<b>桥接服务不可达</b>：' + Util.esc(h.error || '') +
-              '<br>请确认已运行 <code>bridge\\启动桥接服务.bat</code>，' +
-              '且地址填写正确（默认 <code>http://127.0.0.1:8770</code>）。'
-            : '<b>尚未配置桥接服务</b>。浏览器无法直接连接 FTP 与机台 SSH，' +
-              '必须经本机桥接转发。<br>部署方式见「部署说明」。') +
+        '<div class="note warn">' +
+          (h.pending ? '<b>正在后台检测连接</b>。' : '<b>当前为离线模式</b>。' + Util.esc(h.error || '')) +
+          '<br>可正常查看本地数据、导入设备台账、管理工单和导出备份。' +
+          'SSH 巡检、FTP 和目录扫描需启动桥接服务；启动后点击「检测连接」。' +
         '</div>') +
 
       '<div class="cards">' +
@@ -10107,6 +10146,12 @@ const ViewPull = (() => {
       '<div class="section-title">运行日志</div>' +
       '<div class="ft-runlog-box" id="pullRunLog">' + runLogHtml() + '</div>'
     );
+    if (checkConnection) {
+      Bridge.health().then(() => {
+        App.refreshStatus();
+        if (seq === _renderSeq && App.state.curView === 'pull') return render(false);
+      }).catch(e => console.warn('[ViewPull] 状态更新失败：', e.message));
+    }
   }
 
   function card(lbl, val, sub, extra) {
@@ -10198,6 +10243,11 @@ const ViewPull = (() => {
       Toast.warn('请先在「接入设置」里填写桥接地址');
       return false;
     }
+    const h = await Bridge.health();
+    if (!h.ok) {
+      Toast.warn('当前为离线模式。实时接入需启动桥接服务，再点击「检测连接」。');
+      return false;
+    }
     try { await Bridge.pushConfig(); return true; }
     catch (e) { Toast.error('下发配置失败：' + e.message); return false; }
   }
@@ -10205,6 +10255,7 @@ const ViewPull = (() => {
   async function probe() {
     log('开始检测桥接连接…');
     const h = await Bridge.health(true);
+    App.refreshStatus();
     if (!h.ok) {
       log('桥接不可达：' + (h.error || ''), 'err');
       Toast.error(h.error || '桥接不可达');
@@ -12905,7 +12956,7 @@ const Mock = (() => {
         let state;
         if (eqState === 'fault' && i < 4) state = 'abort';
         else if (r < 0.70) state = 'testing';
-        else if (r < 0.92) state = 'pass';
+        else if (r < 0.955) state = 'pass';
         else if (r < 0.965) state = 'fail';
         else state = 'abort';
 
@@ -12942,6 +12993,37 @@ const Mock = (() => {
       }
 
       if (o.onProgress && done % 4000 < eq.capacity) o.onProgress(done, total, eq.station);
+    });
+
+    /* 按工站 / 日期 / 工单限制 FAIL 数量，防止小样本的随机波动让良率低于 95%。
+       口径与看板一致：PASS / (PASS + FAIL)，在测与 ABORT 不入分母。
+       在派生不良前同步修正盘位和记录，保证各处显示的结果一致。 */
+    const resultGroups = new Map();
+    const slotsBySn = new Map(slotBatch.map(x => [x.sn, x]));
+    records.forEach(rec => {
+      if (rec.result !== 'PASS' && rec.result !== 'FAIL') return;
+      const key = JSON.stringify([rec.station, rec.day, rec.woNo]);
+      if (!resultGroups.has(key)) resultGroups.set(key, { total: 0, fails: [] });
+      const group = resultGroups.get(key);
+      group.total++;
+      if (rec.result === 'FAIL') group.fails.push(rec);
+    });
+    resultGroups.forEach(group => {
+      const maxFails = Math.floor(group.total / 20);
+      // 用同一随机种子选取保留的失败样本，避免偏向前面的设备。
+      for (let i = group.fails.length - 1; i > 0; i--) {
+        const j = ri(0, i);
+        [group.fails[i], group.fails[j]] = [group.fails[j], group.fails[i]];
+      }
+      group.fails.slice(maxFails).forEach(rec => {
+        rec.result = 'PASS';
+        rec.errCode = '';
+        const slot = slotsBySn.get(rec.sn);
+        slot.state = 'pass';
+        slot.result = 'pass';
+        slot.errCode = '';
+        slot.retestRound = 0;
+      });
     });
 
     /* 不良记录：从 FAIL 盘位派生 */
@@ -13400,7 +13482,7 @@ const App = (() => {
     const bchip = document.getElementById('bridgeChip');
     if (bchip) {
       if (typeof Bridge !== 'undefined') {
-        const h = await Bridge.health();
+        const h = Bridge.peekHealth();
         bchip.textContent = Bridge.healthLabel(h);
         bchip.className = Bridge.healthChipClass(h);
         bchip.title = h.ok
@@ -13409,7 +13491,8 @@ const App = (() => {
             (h.sshHosts ? '\n巡检机台 ' + h.sshHosts + ' 台' : '') +
             (h.paramiko === false ? '\n未装 paramiko，SSH 仅支持密钥认证' : '')
           : (h.configured
-              ? '桥接不可达：' + (h.error || '') + '\n请运行 bridge\\启动桥接服务.bat'
+              ? (h.pending ? '正在后台检测桥接连接' : '离线使用：' + (h.error || '')) +
+                '\n本地查看、台账导入和导出可正常使用；SSH / FTP 实时接入需要桥接服务。'
               : '尚未配置桥接服务\n浏览器无法直连 FTP/SSH，需经桥接转发');
       } else {
         bchip.textContent = '桥接未配置';
@@ -13480,6 +13563,7 @@ const App = (() => {
     if (typeof ViewBad !== 'undefined' && ViewBad.bind) ViewBad.bind();
     if (typeof ViewWo !== 'undefined' && ViewWo.bind) ViewWo.bind();
     if (typeof ViewTrace !== 'undefined' && ViewTrace.bind) ViewTrace.bind();
+    if (typeof ViewPull !== 'undefined' && ViewPull.bind) ViewPull.bind();
 
     // 顶栏按钮
     bindTopbar();
@@ -13490,7 +13574,10 @@ const App = (() => {
     // 调用方（含冒烟测试）会读到空的视图容器
     const cur = LocalStore.ui.get('curView', 'floor');
     await switchView(VIEWS.some(v => v.key === cur) ? cur : 'floor');
-    await refreshStatus();
+    refreshStatus().catch(e => console.warn('[App] 状态更新失败：', e.message));
+    // 网络探测不参与启动：离线时首屏和所有本地按钮仍立即可用。
+    Bridge.health().then(() => refreshStatus()).catch(e =>
+      console.warn('[App] 桥接状态更新失败：', e.message));
 
     // 首屏渲染完成，此后允许增量补丁
     state.canPatch = true;
@@ -13527,6 +13614,8 @@ const App = (() => {
       loadAll().then(() => {
         switchView(state.curView);
         refreshStatus();
+        Bridge.health().then(() => refreshStatus()).catch(e =>
+          console.warn('[App] 桥接状态更新失败：', e.message));
         Toast.ok('已刷新');
       });
     });
