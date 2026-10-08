@@ -37,6 +37,8 @@ Lava_test 是面向 SSD 产线的测试数据看板，将工站、机柜、服�
 
 **[打开 Lava_test 测试看板](./Lava_test看板.html)**
 
+也可以直接访问在线版本：**[Lava_test 测试看板 · Vercel](https://lavatestboard.vercel.app/)**
+
 该页面无需安装依赖，支持离线查看、生成模拟数据、产线平面图、当日报表、产量统计、不良与报错记录、工单管理、日志分析和数据导出。下载项目后，也可以在本地双击 `Lava_test看板.html` 打开。
 
 ### 部署到 Vercel
