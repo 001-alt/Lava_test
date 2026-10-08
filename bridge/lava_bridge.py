@@ -39,6 +39,8 @@ import json
 import time
 import argparse
 import threading
+import secrets
+import hmac
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -48,6 +50,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from security import AccessControl, ForbiddenOperation, check_command  # noqa: E402
 import channels as ch                                                  # noqa: E402
 import ssh_channel as sshmod                                           # noqa: E402
+from sqlite_store import SQLiteStore                                   # noqa: E402
 
 VERSION = '1.0.0'
 START_AT = time.time()
@@ -81,6 +84,11 @@ class Bridge(object):
         self.acl = AccessControl()
         self.last_error = ''
         self._probe_cache = {}     # 通道健康检查结果缓存（避免阻塞式实时探测）
+        self.storage = None
+        self.storage_token = secrets.token_urlsafe(32)
+
+    def enable_storage(self, path):
+        self.storage = SQLiteStore(path)
 
     def invalidate_health(self, key=None):
         """配置变更后清掉缓存，让下次 health 立即重新探测"""
@@ -174,7 +182,8 @@ class Bridge(object):
                   os.path.join(os.path.dirname(here), 'dist'),
                   here]
         for d in cands:
-            if d and os.path.isfile(os.path.join(d, 'Lava_test看板.html')):
+            if d and (os.path.isfile(os.path.join(d, 'Lava_test看板.html')) or
+                      os.path.isfile(os.path.join(d, 'LavaTestBoard.html'))):
                 return d
         return ''
 
@@ -196,6 +205,10 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- 公共 ---------------------------------------------------------------
     def _cors(self):
+        # SQLite desktop mode is same-origin only; never expose the bootstrap
+        # token to arbitrary websites through wildcard CORS.
+        if BRIDGE.storage:
+            return
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-Bridge-Token')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
@@ -247,6 +260,22 @@ class Handler(BaseHTTPRequestHandler):
     def _query(self):
         return {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
 
+    def _storage_auth(self):
+        if not BRIDGE.storage:
+            self._err('SQLite 未启用', 404)
+            return False
+        origin = self.headers.get('Origin')
+        port = self.server.server_address[1]
+        allowed = ('http://127.0.0.1:%d' % port, 'http://localhost:%d' % port)
+        host = self.headers.get('Host', '')
+        if host not in ('127.0.0.1:%d' % port, 'localhost:%d' % port) or (origin and origin not in allowed):
+            self._err('存储接口仅允许本机同源访问', 403)
+            return False
+        if not hmac.compare_digest(self.headers.get('X-Lava-Storage-Token', ''), BRIDGE.storage_token):
+            self._err('存储会话令牌不正确', 403)
+            return False
+        return True
+
     # -- 入口 ---------------------------------------------------------------
     def do_OPTIONS(self):
         self.send_response(204)
@@ -280,15 +309,22 @@ class Handler(BaseHTTPRequestHandler):
             return
         path = urlparse(self.path).path
         try:
+            if path == '/api/storage' and not self._storage_auth():
+                return
             length = int(self.headers.get('Content-Length') or 0)
+            if length < 0 or length > 32 * 1024 * 1024:
+                self.close_connection = True
+                return self._err('请求体过大', 413)
             raw = self.rfile.read(length) if length else b''
             try:
                 body = json.loads(raw.decode('utf-8')) if raw else {}
             except ValueError:
-                body = {}
+                return self._err('无效 JSON', 400)
             self._route_post(path, body)
         except ForbiddenOperation as e:
             self._err('只读守卫拒绝：%s' % e, 403)
+        except (ValueError, TypeError) as e:
+            self._err(str(e), 400)
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -369,6 +405,9 @@ class Handler(BaseHTTPRequestHandler):
     def _route_post(self, path, body):
         B = BRIDGE
 
+        if path == '/api/storage':
+            return self._json({'ok': True, 'result': B.storage.execute(body)})
+
         if path == '/api/config':
             B.apply_config(body or {})
             return self._json({'ok': True})
@@ -434,6 +473,10 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- 静态文件 -----------------------------------------------------------
     def _serve_static(self, path):
+        if BRIDGE.storage:
+            port = self.server.server_address[1]
+            if self.headers.get('Host', '') not in ('127.0.0.1:%d' % port, 'localhost:%d' % port):
+                return self._err('无效本地主机地址', 403)
         root = BRIDGE.web_root()
         if not root:
             return self._text(
@@ -452,7 +495,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._err('路径越界', 403)
 
         if os.path.isdir(full):
-            full = os.path.join(full, 'Lava_test看板.html')
+            names = ('Lava_test看板.html', 'LavaTestBoard.html')
+            full = next((os.path.join(full, n) for n in names
+                         if os.path.isfile(os.path.join(full, n))), os.path.join(full, names[0]))
         if not os.path.isfile(full):
             return self._err('未找到：%s' % rel, 404)
 
@@ -466,6 +511,11 @@ class Handler(BaseHTTPRequestHandler):
 
         with open(full, 'rb') as f:
             data = f.read()
+        if BRIDGE.storage and os.path.basename(full) == 'Lava_test看板.html':
+            runtime = json.dumps({'storage': 'sqlite', 'url': 'http://127.0.0.1:%d' % self.server.server_address[1],
+                                  'token': BRIDGE.storage_token}, ensure_ascii=True)
+            bootstrap = '<script>window.LAVA_RUNTIME=%s;</script>' % runtime
+            data = data.replace(b'<head>', b'<head>' + bootstrap.encode('utf-8'), 1)
         self.send_response(200)
         self.send_header('Content-Type', ctype)
         self.send_header('Content-Length', str(len(data)))
@@ -553,6 +603,7 @@ def main():
     ap.add_argument('--token', default='', help='访问令牌（远程访问必填）')
     ap.add_argument('--web-root', default='', help='看板页面所在目录')
     ap.add_argument('--config', default='', help='从 JSON 文件加载初始配置')
+    ap.add_argument('--database', default='', help='启用 SQLite 并指定数据库文件')
     ap.add_argument('--selftest', action='store_true', help='只做自检，不启动服务')
     args = ap.parse_args()
 
@@ -561,6 +612,10 @@ def main():
 
     if args.web_root:
         BRIDGE.cfg['webRoot'] = args.web_root
+    if args.database:
+        if args.allow_remote:
+            ap.error('SQLite 模式目前仅支持本机访问')
+        BRIDGE.enable_storage(args.database)
 
     if args.config and os.path.isfile(args.config):
         try:
@@ -592,7 +647,8 @@ def main():
                               else '未找到（把 Lava_test看板.html 放到上级目录，或用 --web-root 指定）'))
     print(' paramiko : %s' % ('已安装' if sshmod.HAS_PARAMIKO else '未安装（SSH 仅密钥认证）'))
     print(' 远程访问 : %s' % ('允许（需令牌）' if args.allow_remote else '禁止（仅本机）'))
-    print(' 只读模式 : 全链路只读，写操作一律拒绝')
+    print(' 远端操作 : 只读；本地 SQLite 数据支持持久化写入' if BRIDGE.storage
+          else ' 只读模式 : 全链路只读，写操作一律拒绝')
     print('-' * 66)
     print(' 按 Ctrl+C 停止')
     print('=' * 66)
@@ -604,6 +660,9 @@ def main():
     finally:
         BRIDGE.ssh.stop_polling()
         srv.shutdown()
+        srv.server_close()
+        if BRIDGE.storage:
+            BRIDGE.storage.close()
     return 0
 
 

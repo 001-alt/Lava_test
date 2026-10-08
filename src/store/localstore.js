@@ -14,6 +14,19 @@ const LocalStore = (() => {
   let _cache = null;            // 内存副本，避免频繁 JSON.parse
   let _dirty = false;
   let _quotaWarned = false;
+  let _initPromise = null;
+
+  function init() {
+    if (_initPromise) return _initPromise;
+    _initPromise = (async () => {
+      if (Sqlite.enabled()) {
+        const rows = await Sqlite.get('meta', ['appConfig']);
+        _cache = mergeDeep(Schema.defaultConfig(), rows.length ? rows[0].v : {});
+      }
+      return load();
+    })();
+    return _initPromise;
+  }
 
   /* ---------- 可用性探测 ---------- */
   function available() {
@@ -72,6 +85,10 @@ const LocalStore = (() => {
   /* ---------- 写 ---------- */
   function save() {
     if (!_cache) return { ok: false, reason: 'empty' };
+    if (Sqlite.enabled()) {
+      _dirty = false;
+      return Sqlite.saveConfig(_cache);
+    }
     if (!available()) return { ok: false, reason: 'unavailable' };
     try {
       localStorage.setItem(LS_KEY, JSON.stringify(_cache));
@@ -158,5 +175,10 @@ const LocalStore = (() => {
 
   function isDirty() { return _dirty; }
 
-  return { available, load, save, saveSoon, set, get, ui, replace, reset, size, isDirty };
+  async function flush() {
+    if (_dirty) save();
+    if (Sqlite.enabled()) await Sqlite.flush();
+  }
+
+  return { init, available, load, save, saveSoon, set, get, ui, replace, reset, size, isDirty, flush };
 })();

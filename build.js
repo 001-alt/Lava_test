@@ -39,6 +39,7 @@ const SCRIPTS = [
   'core/theme.js',
 
   'store/schema.js',
+  'store/sqlite.js',
   'store/localstore.js',
   'store/idb.js',
   'store/migrate.js',

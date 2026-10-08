@@ -1,0 +1,4 @@
+# Optional native desktop window. Without it, desktop_app.py opens the default browser.
+pywebview>=5.0
+# Build a distributable Windows executable:
+pyinstaller>=6.0

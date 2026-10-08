@@ -3,6 +3,12 @@ dist/
 coverage/
 __pycache__/
 *.py[cod]
+data/
+LavaTestBoard.html
+build/
+build2/
+dist2/
+*.spec
 .pytest_cache/
 .DS_Store
 

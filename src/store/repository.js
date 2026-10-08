@@ -2,7 +2,8 @@
    存储门面（Repository）—— 上层只调这里，不感知底层后端
    ----------------------------------------------------------------------------
    后端选择顺序：
-     1. Idb      IndexedDB         首选，容量大、按索引查询
+     0. SQLite  Python 本地服务     桌面版使用，失败时明确报错，不切换数据源
+     1. Idb      IndexedDB         独立 HTML 首选，容量大、按索引查询
      2. Local    紧凑 localStorage  降级（file:// 下 Chrome 禁用 IDB 时）
      3. Memory   纯内存             兜底（localStorage 也写不进时）
 
@@ -40,6 +41,12 @@ const Repo = (() => {
   function init() {
     if (_ready) return _ready;
     _ready = (async () => {
+      if (Sqlite.enabled()) {
+        await Sqlite.call('info');
+        _backend = 'sqlite';
+        console.info('[Repo] 存储后端：SQLite');
+        return _backend;
+      }
       const hasIdb = await Idb.available();
       if (hasIdb) {
         try {
@@ -69,7 +76,7 @@ const Repo = (() => {
   function backend() { return _backend || 'uninit'; }
   function isDegraded() { return _backend === 'local' || _backend === 'memory'; }
   function backendLabel() {
-    return { idb: 'IndexedDB（完整）', local: '本地存储（降级）', memory: '内存（不持久）', uninit: '未初始化' }[_backend] || '未知';
+    return { sqlite: 'SQLite（本地数据库）', idb: 'IndexedDB（完整）', local: '本地存储（降级）', memory: '内存（不持久）', uninit: '未初始化' }[_backend] || '未知';
   }
 
   /* ==========================================================================
@@ -185,6 +192,10 @@ const Repo = (() => {
     await init();
     const out = new Map();
     if (!keys || !keys.length) return out;
+    if (_backend === 'sqlite') {
+      (await Sqlite.get('slots', keys)).forEach(s => out.set(s.key, s));
+      return out;
+    }
 
     if (_backend === 'idb') {
       // 分块读，避免单个事务过大
@@ -210,6 +221,7 @@ const Repo = (() => {
 
   async function getAllSlots() {
     await init();
+    if (_backend === 'sqlite') return Sqlite.query('slots');
     if (_backend === 'idb') return Idb.getAll('slots');
     return Array.from(_slotMem.values());
   }
@@ -217,6 +229,7 @@ const Repo = (() => {
   /* 按工站读盘位（IDB 走索引，降级走内存过滤） */
   async function getSlotsByStation(station) {
     await init();
+    if (_backend === 'sqlite') return Sqlite.query('slots', { index: 'station', value: station });
     if (_backend === 'idb') {
       return Idb.query('slots', { index: 'station', value: station });
     }
@@ -233,6 +246,7 @@ const Repo = (() => {
     _stats.writes++;
 
     arr.forEach(s => { if (!s.updatedAt) s.updatedAt = Date.now(); });
+    if (_backend === 'sqlite') return Sqlite.putMany('slots', arr);
 
     if (_backend === 'idb') {
       return Idb.bulkPut('slots', arr);
@@ -250,6 +264,7 @@ const Repo = (() => {
   /* 清空所有盘位（复位用） */
   async function clearSlots() {
     await init();
+    if (_backend === 'sqlite') return Sqlite.call('clear', 'slots');
     if (_backend === 'idb') return Idb.clear('slots');
     _slotMem.clear();
     saveLocalSlotsSoon();
@@ -259,6 +274,7 @@ const Repo = (() => {
   /* 盘位统计：由 Topology 的容量减去非空盘位，得空位数 */
   async function slotCounts() {
     await init();
+    if (_backend === 'sqlite') return { occupied: await Sqlite.call('count', 'slots') };
     if (_backend === 'idb') {
       return { occupied: await Idb.count('slots') };
     }
@@ -269,12 +285,17 @@ const Repo = (() => {
      通用表读写（records / bad / error / judgements / archives / logindex）
      ========================================================================== */
   const KEY_PATH = {
+    slots: 'key', ledger: 'dedupKey', meta: 'k',
     records: 'dedupKey', bad: 'id', error: 'id', judgements: 'id',
     archives: 'id', workorders: 'id', devices: 'id', logindex: 'id', rawfiles: 'path'
   };
 
   async function put(store, rec) {
     await init();
+    if (_backend === 'sqlite') {
+      await Sqlite.putMany(store, [rec]);
+      return rec[KEY_PATH[store] || 'id'];
+    }
     if (_backend === 'idb') return Idb.put(store, rec);
     const kp = KEY_PATH[store] || 'id';
     const list = _tableMem[store] = _tableMem[store] || [];
@@ -289,6 +310,7 @@ const Repo = (() => {
     await init();
     const arr = recs || [];
     if (!arr.length) return 0;
+    if (_backend === 'sqlite') return Sqlite.putMany(store, arr);
     if (_backend === 'idb') return Idb.bulkPut(store, arr);
     const kp = KEY_PATH[store] || 'id';
     const list = _tableMem[store] = _tableMem[store] || [];
@@ -305,6 +327,7 @@ const Repo = (() => {
 
   async function query(store, filter, opts) {
     await init();
+    if (_backend === 'sqlite') return Sqlite.query(store, filter, opts);
     if (_backend === 'idb') {
       try {
         return await Idb.query(store, filter, opts);
@@ -336,6 +359,8 @@ const Repo = (() => {
 
   async function count(store, where) {
     await init();
+    if (_backend === 'sqlite') return where
+      ? (await Sqlite.query(store, { where })).length : Sqlite.call('count', store);
     if (_backend === 'idb') {
       if (!where) return Idb.count(store);
       const all = await Idb.query(store, null, { filter: where });
@@ -347,6 +372,7 @@ const Repo = (() => {
 
   async function remove(store, id) {
     await init();
+    if (_backend === 'sqlite') return Sqlite.keysAction('delete', store, [id]);
     if (_backend === 'idb') return Idb.del(store, id);
     const kp = KEY_PATH[store] || 'id';
     const list = _tableMem[store] = _tableMem[store] || [];
@@ -358,6 +384,10 @@ const Repo = (() => {
 
   async function removeWhere(store, where) {
     await init();
+    if (_backend === 'sqlite') {
+      const hits = await Sqlite.query(store, { where });
+      return Sqlite.keysAction('deleteMany', store, hits.map(h => h[KEY_PATH[store] || 'id']));
+    }
     if (_backend === 'idb') {
       const hits = await Idb.query(store, null, { filter: where });
       for (const h of hits) {
@@ -375,6 +405,7 @@ const Repo = (() => {
 
   async function clearTable(store) {
     await init();
+    if (_backend === 'sqlite') return Sqlite.call('clear', store);
     if (_backend === 'idb') return Idb.clear(store);
     _tableMem[store] = [];
     saveLocalTablesSoon();
@@ -387,6 +418,7 @@ const Repo = (() => {
   async function ledgerFilter(keys) {
     await init();
     if (!keys || !keys.length) return [];
+    if (_backend === 'sqlite') return Sqlite.keysAction('ledgerFilter', 'ledger', keys);
     if (_backend === 'idb') {
       const seen = await Idb.ledgerFilter(keys);
       return keys.filter(k => seen.has(k));
@@ -398,6 +430,7 @@ const Repo = (() => {
     await init();
     const arr = Array.isArray(keys) ? keys : [keys];
     if (!arr.length) return 0;
+    if (_backend === 'sqlite') return Sqlite.keysAction('ledgerMark', 'ledger', arr);
     if (_backend === 'idb') return (await Idb.ledgerMarkMany(arr)).length;
     const list = _tableMem.__ledger = _tableMem.__ledger || [];
     const set = new Set(list.map(x => x.dedupKey));
@@ -417,6 +450,10 @@ const Repo = (() => {
      ========================================================================== */
   async function metaGet(k, d) {
     await init();
+    if (_backend === 'sqlite') {
+      const rows = await Sqlite.get('meta', [k]);
+      return rows.length ? rows[0].v : d;
+    }
     if (_backend === 'idb') return Idb.metaGet(k, d);
     const list = _tableMem.__meta || [];
     const hit = list.filter(x => x.k === k)[0];
@@ -424,6 +461,10 @@ const Repo = (() => {
   }
   async function metaSet(k, v) {
     await init();
+    if (_backend === 'sqlite') {
+      await Sqlite.putMany('meta', [{ k, v, at: Date.now() }]);
+      return v;
+    }
     if (_backend === 'idb') return Idb.metaSet(k, v);
     const list = _tableMem.__meta = _tableMem.__meta || [];
     const hit = list.filter(x => x.k === k)[0];
@@ -437,6 +478,7 @@ const Repo = (() => {
      ========================================================================== */
   async function estimate() {
     await init();
+    if (_backend === 'sqlite') return Sqlite.call('info');
     if (_backend === 'idb') return Idb.estimate();
     // 降级模式：汇报 localStorage 占用
     let used = 0;
@@ -450,6 +492,7 @@ const Repo = (() => {
 
   async function clearAll() {
     await init();
+    if (_backend === 'sqlite') return Sqlite.call('clearAll');
     _slotMem.clear();
     Object.keys(_tableMem).forEach(k => { _tableMem[k] = []; });
     if (_backend === 'idb') await Idb.clearAll();

@@ -372,7 +372,7 @@ const App = (() => {
 
   async function _boot() {
     const t0 = Date.now();
-    state.cfg = LocalStore.load();
+    state.cfg = await LocalStore.init();
 
     // 主题尽早应用，避免「先按深色画一帧再跳成浅色」的闪屏
     Theme.init();

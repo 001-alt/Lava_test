@@ -16,6 +16,7 @@ const Bridge = (() => {
 
   /* 桥接地址：可在「系统设置」里改；空串表示未配置，所有调用据此短路 */
   function base() {
+    if (Sqlite.enabled()) return Sqlite.runtime().url;
     const u = (App.cfg.channels.ftp || {}).bridgeUrl || '';
     return String(u).trim().replace(/\/+$/, '');
   }
