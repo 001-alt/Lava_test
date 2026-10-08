@@ -39,6 +39,17 @@ Lava_test 是面向 SSD 产线的测试数据看板，将工站、机柜、服�
 
 该页面无需安装依赖，支持离线查看、生成模拟数据、产线平面图、当日报表、产量统计、不良与报错记录、工单管理、日志分析和数据导出。下载项目后，也可以在本地双击 `Lava_test看板.html` 打开。
 
+### 部署到 Vercel
+
+项目已包含 `vercel.json`，导入 GitHub 仓库后，Vercel 会将根地址自动指向测试看板 HTML：
+
+1. 登录 [Vercel](https://vercel.com/)，选择 **Add New → Project**。
+2. 导入 `001-alt/Lava_test` GitHub 仓库。
+3. Framework Preset 选择 **Other**，Build Command 留空，Output Directory 使用 `.`。
+4. 点击 **Deploy**，部署完成后访问 Vercel 分配的域名即可展示看板。
+
+如果通过命令行部署，可在项目目录执行 `npx vercel`；正式发布使用 `npx vercel --prod`。
+
 ## 项目亮点
 
 - 覆盖 `ICT → FUNCTION → BIST → ESS → FINAL → CUS` 全流程，ORT 作为旁路抽检
